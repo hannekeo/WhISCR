@@ -1,0 +1,260 @@
+---
+title: "WhISCR a pipeline in CellProfiler and R for the analysis of Whole-slide immunofluorescence image data"
+author: "Hanneke Okkenhaug"
+date: "March 2022"
+output: pdf_document
+---
+
+# Import fuctions
+```{r setup, include=FALSE}
+# Selection of the main input folder 
+myPath <- choose.dir()  # opens the dialog window in "C:\\Users\\Root\\Documents"
+
+knitr::opts_knit$set(echo = TRUE, root.dir=myPath)
+# The fuction used to import the csv files
+readDatFile <- function(f) {
+  dat.fl <- read.csv(f) }
+```
+
+
+# Importing all files
+```{r}
+
+# Nuclei
+csv.files  <- list.files(path=myPath, recursive=T, pattern="Nuclei.csv", full.names=T)
+csv.files <- lapply(csv.files, readDatFile)
+Nuclei <- do.call(rbind, csv.files) 
+
+# Cells 
+csv.files  <- list.files(path=myPath, recursive=T, pattern="Cells.csv", full.names = TRUE)
+csv.files <- lapply(csv.files, readDatFile)
+Cells <- do.call(rbind, csv.files)
+
+csv.files  <- list.files(path=myPath, recursive=T, pattern="WhitePulp.csv", full.names=T)
+csv.files <- lapply(csv.files, readDatFile)
+WhitePulp <- do.call(rbind, csv.files) 
+
+csv.files  <- list.files(path=myPath, recursive=T, pattern="Image.csv", full.names=T)
+csv.files <- lapply(csv.files, readDatFile)
+images <- do.call(rbind, csv.files) 
+```
+
+
+# Translating nuclear location
+```{r}
+
+as.numeric(gsub("X", "", Nuclei$Metadata_X.1)) -> Nuclei$Metadata_X
+as.numeric(gsub("Y", "", Nuclei$Metadata_Y.1)) -> Nuclei$Metadata_Y
+Nuclei$CorrX <- (Nuclei$Metadata_X *600) + Nuclei$Location_Center_X
+Nuclei$CorrY <- (Nuclei$Metadata_Y *600) + Nuclei$Location_Center_Y
+```
+
+
+# Removing duplicates
+```{r}
+# Remove duplicates in X
+image_list <- unique(Nuclei$Metadata_image)
+Nuclei[NULL, ] -> NucleiCorrected
+for(i in seq_along(image_list)){
+  Nuclei[Nuclei$Metadata_image ==image_list[i], ] -> image1
+  m = max(image1$Metadata_X)
+  for(x in 1:m ){
+    image1[image1$Metadata_X== x-1, ] -> X1
+    image1[image1$Metadata_X== x, ] -> X2
+    X1[X1$AreaShape_BoundingBoxMinimum_X<615 & X1$AreaShape_BoundingBoxMaximum_X>614, ] -> E0
+    X2[X2$AreaShape_BoundingBoxMinimum_X>14 & X2$AreaShape_BoundingBoxMaximum_X<615, ] -> Q1
+    rbind(NucleiCorrected, E0, Q1) ->  NucleiCorrected}
+  image1[image1$Metadata_X== 0, ] -> X1
+  image1[image1$Metadata_X== m, ] -> X2
+  X2[X2$AreaShape_BoundingBoxMaximum_X>614, ] -> Last0
+  X1[X1$AreaShape_BoundingBoxMaximum_X<615, ] -> First0
+  rbind(NucleiCorrected, First0, Last0) -> NucleiCorrected}
+
+# Remove duplicates in X
+NucleiCorrected -> Nuclei
+Nuclei[NULL, ] -> NucleiCorrected
+for(i in seq_along(image_list)){
+  Nuclei[Nuclei$Metadata_image ==image_list[i], ] -> image1
+  m = max(image1$Metadata_Y)
+  for(x in 1:m ){
+    image1[image1$Metadata_Y== x-1, ] -> X1
+    image1[image1$Metadata_Y== x, ] -> X2
+    X1[X1$AreaShape_BoundingBoxMinimum_Y<615 & X1$AreaShape_BoundingBoxMaximum_Y>614, ] -> E0
+    X2[X2$AreaShape_BoundingBoxMinimum_Y>14 & X2$AreaShape_BoundingBoxMaximum_Y<615, ] -> Q1
+    rbind(NucleiCorrected, E0, Q1) ->  NucleiCorrected}
+  image1[image1$Metadata_Y== 0, ] -> X1
+  image1[image1$Metadata_Y== m, ] -> X2
+  X2[X2$AreaShape_BoundingBoxMaximum_Y>614, ] -> Last0
+  X1[X1$AreaShape_BoundingBoxMaximum_Y<615, ] -> First0
+  rbind(NucleiCorrected, First0, Last0) -> NucleiCorrected}
+NucleiCorrected -> Nuclei
+
+# Add CellID for linking of nucleus and cell tables
+paste(Nuclei$ImageNumber, Nuclei$ObjectNumber, sep="_") -> Nuclei$CellID
+paste(Cells$ImageNumber , Cells$Parent_Nuclei, sep="_") -> Cells$CellID
+```
+
+# Selecting relevant columns
+```{r}
+colnames(Nuclei)
+Cells[,c(149, 13,39,40,44,45,46,79,80,81,109,110)] -> CellsCond
+
+gsub("Intensity_Integrated","Integrated", colnames(CellsCond)) -> colnames(CellsCond)
+gsub("Intensity_Lower","Lower", colnames(CellsCond)) -> colnames(CellsCond)
+gsub("Intensity_M","M", colnames(CellsCond)) -> colnames(CellsCond)
+gsub("Intensity_U","U", colnames(CellsCond)) -> colnames(CellsCond)
+gsub("Intensity_S","S", colnames(CellsCond)) -> colnames(CellsCond)
+gsub("AreaShape_","", colnames(CellsCond)) -> colnames(CellsCond)
+paste(colnames(CellsCond), "Cell", sep="_") -> colnames(CellsCond)
+colnames(CellsCond)[1] <- "CellID"
+
+Nuclei[,c(152,  11,150,151,7,9,13,35,38,39,43,44,45,78,79,80,147,148,149)] -> NucleiCond
+gsub("Intensity_Integrated","Integrated", colnames(NucleiCond)) -> colnames(NucleiCond)
+gsub("Intensity_Lower","Lower", colnames(NucleiCond)) -> colnames(NucleiCond)
+gsub("Intensity_M","M", colnames(NucleiCond)) -> colnames(NucleiCond)
+gsub("Intensity_U","U", colnames(NucleiCond)) -> colnames(NucleiCond)
+gsub("Intensity_S","S", colnames(NucleiCond)) -> colnames(NucleiCond)
+gsub("AreaShape_","", colnames(NucleiCond)) -> colnames(NucleiCond)
+gsub("Metadata_","", colnames(NucleiCond)) -> colnames(NucleiCond)
+
+merge(NucleiCond, CellsCond, by="CellID", all=T) -> AllData
+na.omit(AllData) -> AllData
+AllData$Genotype <- "WT" 
+```
+
+
+# Plots for Clasification
+```{r fig.height=3,fig.width=3}
+AllData$UpperQuartileIntensity_B220_Cell/AllData$UpperQuartileIntensity_CD3_Cell -> AllData$RatioBC
+doublePos <- AllData[AllData$UpperQuartileIntensity_B220_Cell>0.2 & AllData$UpperQuartileIntensity_CD3_Cell>0.125, ]
+
+plot1 <- ggplot(AllData, aes(x=UpperQuartileIntensity_B220_Cell, y=UpperQuartileIntensity_CD3_Cell))+ 
+geom_point(size=1, alpha=.5)  +
+geom_vline(xintercept = 0.2)+ 
+geom_hline(yintercept = 0.125)  
+print(plot1) 
+
+plot1 <- ggplot(doublePos, aes(x=UpperQuartileIntensity_B220_Cell, y=RatioBC))+ 
+geom_point(size=1, alpha=.5)  +
+geom_vline(xintercept = 0.2)+
+geom_hline(yintercept = 1.6)
+print(plot1) 
+
+plot1 <- ggplot(doublePos, aes(x=UpperQuartileIntensity_CD3_Cell, y=RatioBC))+ 
+geom_point(size=1, alpha=.5)  +
+geom_vline(xintercept = 0.125)+
+geom_hline(yintercept = 1.6)
+print(plot1) 
+
+
+```
+
+
+# Classification
+```{r}
+# Cell type
+AllData[AllData$UpperQuartileIntensity_CD3_Cell>=0.125 & AllData$UpperQuartileIntensity_B220_Cell<0.2, ] -> TCells
+TCells$Class <- "TCell"
+AllData[AllData$UpperQuartileIntensity_B220_Cell>=0.2 & AllData$UpperQuartileIntensity_CD3_Cell<0.125, ] -> BCells
+BCells$Class <- "BCell"
+AllData[AllData$UpperQuartileIntensity_B220_Cell<0.2 & AllData$UpperQuartileIntensity_CD3_Cell<0.125, ] -> OtherCells
+OtherCells$Class <- "Other"
+rbind(BCells,TCells, OtherCells) -> AllDataCorr
+AllData[AllData$UpperQuartileIntensity_B220_Cell>=0.2 & AllData$UpperQuartileIntensity_CD3_Cell>=0.125, ] -> doublePos
+doublePos[doublePos$RatioBC>1.6, ] -> doublePosB
+doublePosB$Class <- "BCell"
+doublePos[doublePos$RatioBC<=1.6, ] -> doublePosT
+doublePosT$Class <- "TCell"
+rbind(AllDataCorr, doublePosB, doublePosT) -> AllDataCorr
+
+# Red or White pulp
+AllDataCorr[AllDataCorr$Parent_WhitePulp!=0, ] -> CellsWhite
+CellsWhite$Pulp <- "White pulp"
+AllDataCorr[AllDataCorr$Parent_WhitePulp==0, ] -> CellsRed
+CellsRed$Pulp <- "Red pulp"
+CellsRed$Zone <- "Red pulp"
+
+# B zone and T zone
+CellsWhite[CellsWhite$Parent_Bzone!=0, ] -> CellsBZone
+CellsWhite[CellsWhite$Parent_Bzone==0 & CellsWhite$Parent_WhitePulp!=0, ] -> CellsTZone
+CellsBZone$Zone <- "BZone"
+CellsTZone$Zone <- "TZone"
+rbind(CellsTZone,CellsBZone) -> CellsWhite
+
+rbind(CellsWhite, CellsRed) -> AllDataCorr
+
+
+```
+
+
+# Plotting data
+```{r fig.height=20,fig.width=20}
+AllDataCorr -> example
+b = 1
+
+for (r in 1:nrow(example)) {
+ if (b<13){
+  example$objectnumber[r] <- b
+  }else{
+  b=1
+  example$objectnumber[r] <- b}
+ b = b+1}
+paste("n",example$objectnumber, sep="") -> example$objectnumber
+
+
+if (max(example$CorrX)> max(example$CorrY)){
+  m = max(example$CorrX)
+} else {
+  m = max(example$CorrY)}
+
+plot1 <- ggplot(example, aes(x=CorrX, y=CorrY, col=objectnumber))+ 
+ geom_point(size=2.3, alpha=1,show.legend = FALSE)+
+ theme(panel.background = element_rect(fill = 'black', colour = 'black'), aspect.ratio=1:1, panel.grid.major=element_blank(),panel.grid.minor=element_blank())+
+ scale_color_brewer(palette = "Paired")+
+ xlim(0,m) +
+ ylim(m,0)
+print(plot1)  
+ggsave(plot1, filename = "allnuc.jpg" ,device = NULL, path = myPath, scale = 2, width = 20, height = 20, dpi = 300, limitsize = TRUE)  
+
+plot1 <- ggplot(example, aes(x=CorrX, y=CorrY, col=Class))+ 
+ geom_point(size=2.3, alpha=1,show.legend = FALSE)+
+ scale_color_manual(values=c("red", "blue","white"))+
+ theme(panel.background = element_rect(fill = 'black', colour = 'black'), aspect.ratio=1:1,panel.grid.major=element_blank(),panel.grid.minor=element_blank())+
+ xlim(0,m) +
+ ylim(m,0)
+print(plot1) 
+ggsave(plot1, filename = "types.jpg" ,device = NULL, path = myPath, scale = 2, width = 20, height = 20, dpi = 300, limitsize = TRUE)  
+
+
+plot1 <- ggplot(example, aes(x=CorrX, y=CorrY, col=Zone))+ 
+ geom_point(size=2.3, alpha=1,show.legend = FALSE)+
+ theme(panel.background = element_rect(fill = 'black', colour = 'black'),aspect.ratio=1:1, panel.grid.major=element_blank(),panel.grid.minor=element_blank())+
+ scale_color_manual(values=c("white", "red","yellow"))+
+ xlim(0,m) +
+ ylim(m,0)
+print(plot1)
+ggsave(plot1, filename = "zones.jpg" ,device = NULL, path = myPath, scale = 2, width = 20, height = 20, dpi = 300, limitsize = TRUE)  
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
